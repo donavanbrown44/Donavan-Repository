@@ -40,6 +40,8 @@ heading:
   #   number = fixed value in degrees, EAST positive, WEST negative. Use this for
   #            flying without GPS (indoors). Look it up:
   #            https://www.ngdc.noaa.gov/geomag/calculators/magcalc.shtml
+  #   Our flying site (WMM2025, late 2026, drifts about -0.1 deg/year):
+  #            San Marcos, TX: 3.2      San Marcos, CA: 10.9
   declination_deg: auto
   deviation_table: []         # set by: python3 -m compass_vision.calibrate swing
   smoothing_alpha: 1.0        # 1.0 = off. The EKF already filters; smoothing adds lag.

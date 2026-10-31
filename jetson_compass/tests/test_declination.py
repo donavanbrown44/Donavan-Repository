@@ -15,6 +15,8 @@ from compass_vision.declination import decimal_year, declination_deg  # noqa: E4
     (39.74, -104.99, 7.5),    # Denver
     (40.71, -74.00, -12.5),   # New York (west = negative)
     (-33.87, 151.21, 12.8),   # Sydney
+    (29.88, -97.94, 3.2),     # San Marcos, TX  (flying site)
+    (33.14, -117.17, 10.9),   # San Marcos, CA  (flying site)
 ])
 def test_known_places(lat, lon, expected):
     assert abs(declination_deg(lat, lon, 0.0, year=2026.8) - expected) < 0.5

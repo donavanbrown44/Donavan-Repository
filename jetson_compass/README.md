@@ -27,6 +27,12 @@ is just as sensitive to them as the digital mag was. Use a liquid-damped compass
 with a red (or otherwise distinct) north end. If the needle isn't colour-coded,
 put a dot of bright paint on the north tip.
 
+**Buy a compass balanced for North America.** In San Marcos the magnetic field dips
+about 58° into the ground, and a compass needle is weighted to cancel the dip for
+the region it's sold for. Compass makers split the world into "zones"; North America
+is usually zone 1 / "MN". A compass balanced for another zone tilts and drags on its
+pivot, which is worst when the drone is moving. A "global needle" compass also works.
+
 **Camera tips.** Refocus the lens for the short distance: Pi-style lenses come
 focused at infinity, so twist the lens. Keep the dial near the centre of the image.
 Add a small LED so lighting is consistent, then cap exposure (`csi_exposure_range_ns`)
@@ -73,6 +79,16 @@ Magnetic Model 2025 (`pygeomag`, offline, no internet needed). It sends **no hea
 then**, so the drone won't arm before GPS lock. The value shows in the status line and
 in each CSV row. For flying without GPS (indoors), put a fixed number there instead
 (east positive, from the [NOAA calculator](https://www.ngdc.noaa.gov/geomag/calculators/magcalc.shtml)).
+
+**Our flying site, San Marcos** (WMM2025, late 2026, drifts about −0.1°/year):
+
+| Site | Declination | Fixed value for no-GPS flights |
+|---|---|---|
+| San Marcos, TX | 3.2° E | `declination_deg: 3.2` |
+| San Marcos, CA | 10.9° E | `declination_deg: 10.9` |
+
+With `auto` you'll see the matching value in the status line (`decl +3.2 gps` or
+`decl +10.9 gps`). If it shows something very different, the GPS position is wrong.
 
 ## 3. Flight controller parameters
 
