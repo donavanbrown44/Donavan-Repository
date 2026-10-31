@@ -1,4 +1,6 @@
-# Jetson compass vision → Pixhawk heading
+# compass-vision
+
+**Jetson + camera reads a physical compass → heading for a Pixhawk (ArduPilot).**
 
 A camera on a Jetson watches a **physical needle compass** on the drone, works out
 the heading, and sends it to a **Pixhawk 6C Mini** over UART in place of the
@@ -75,8 +77,8 @@ program says so and runs on the compass alone.
 ## 2. Jetson setup
 
 ```bash
-git clone <this repo> ~/Donavan-Repository
-cd ~/Donavan-Repository/jetson_compass
+git clone https://github.com/donavanbrown44/compass-vision.git ~/compass-vision
+cd ~/compass-vision
 sudo apt install python3-pip python3-yaml python3-numpy
 pip3 install --user pymavlink pyserial pygeomag
 sudo usermod -aG dialout $USER          # serial port access, then log out/in

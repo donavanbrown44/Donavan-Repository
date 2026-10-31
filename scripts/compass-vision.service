@@ -16,7 +16,7 @@ Wants=nvargus-daemon.service
 Type=simple
 User=CHANGE_ME
 SupplementaryGroups=dialout video
-WorkingDirectory=/home/CHANGE_ME/Donavan-Repository/jetson_compass
+WorkingDirectory=/home/CHANGE_ME/compass-vision
 ExecStart=/usr/bin/python3 -m compass_vision --config config.yaml
 Environment=PYTHONUNBUFFERED=1
 Restart=always
