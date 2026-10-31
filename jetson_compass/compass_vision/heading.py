@@ -86,6 +86,10 @@ class HeadingSample(object):
         self.mag_raw_deg, self.mag_deg, self.true_deg, self.std_deg = mag_raw_deg, mag_deg, true_deg, std_deg
 
 
+def declination_is_auto(value):
+    return isinstance(value, str) and value.strip().lower() == "auto"
+
+
 def needle_to_magnetic(needle_deg):
     """Needle points to magnetic north `needle_deg` clockwise of the nose -> heading."""
     return wrap360(-needle_deg)
@@ -93,7 +97,9 @@ def needle_to_magnetic(needle_deg):
 
 class HeadingEstimator(object):
     def __init__(self, hcfg):
-        self.declination = float(hcfg.get("declination_deg", 0.0))
+        dec = hcfg.get("declination_deg", 0.0)
+        # None = "auto": unknown until the FC's GPS gives a fix (see declination.py)
+        self.declination = None if declination_is_auto(dec) else float(dec)
         self.table = DeviationTable(hcfg.get("deviation_table") or [])
         self.alpha = min(1.0, max(0.01, float(hcfg.get("smoothing_alpha", 1.0))))
         self.max_jump = float(hcfg.get("max_jump_deg", 35.0))
@@ -106,17 +112,28 @@ class HeadingEstimator(object):
         self._t_last = None
         self._jumps = 0
 
+    def set_declination(self, deg):
+        self.declination = float(deg)
+        self._filt = None  # don't compare against headings computed without it
+
     def correct(self, needle_deg):
-        """Return (raw magnetic, corrected magnetic, true) headings for a needle angle."""
+        """Return (raw magnetic, corrected magnetic, true) headings for a needle angle.
+
+        true is None while the declination is still unknown (auto, no GPS fix yet).
+        """
         raw = needle_to_magnetic(needle_deg)
         mag = wrap360(raw + self.table.correction(raw))
-        return raw, mag, wrap360(mag + self.declination)
+        true = None if self.declination is None else wrap360(mag + self.declination)
+        return raw, mag, true
 
     def update(self, t, needle_deg, confidence=1.0, attitude=None):
         if needle_deg is None:
             return HeadingSample(reason="no_needle")
         raw, mag, true = self.correct(needle_deg)
         s = HeadingSample(mag_raw_deg=raw, mag_deg=mag, true_deg=true)
+        if true is None:
+            s.reason = "waiting_for_gps_declination"
+            return s
 
         if attitude is not None:
             if attitude.tilt_deg > self.max_tilt:

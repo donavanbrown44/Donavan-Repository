@@ -17,6 +17,7 @@ import time
 import cv2
 import numpy as np
 
+from . import declination
 from .camera import Camera
 from .config import load_config, resolve_path
 from .heading import HeadingEstimator, wrap180
@@ -25,7 +26,7 @@ from .needle import NeedleDetector
 log = logging.getLogger("compass_vision")
 
 CSV_FIELDS = ["unix_time", "t_capture", "latency_ms", "needle_deg", "confidence",
-              "mag_raw_deg", "mag_deg", "true_deg", "std_deg", "sent", "reason",
+              "mag_raw_deg", "mag_deg", "declination_deg", "true_deg", "std_deg", "sent", "reason",
               "fc_att_time", "fc_roll_deg", "fc_pitch_deg", "fc_yaw_deg", "fc_yawspeed_dps",
               "fc_minus_vision_deg"]
 
@@ -77,6 +78,18 @@ def run(cfg, mode, debug_port_override=None):
         log.info("MAVLink on %s @ %s baud, firmware=%s, mode=%s",
                  mcfg["device"], mcfg["baud"], mcfg["firmware"], mode)
 
+    auto_decl = estimator.declination is None
+    if auto_decl:
+        declination.require_model()  # fail now if pygeomag is missing, not mid-session
+        if link:
+            link.want_gps()
+            log.info("declination: auto - will compute from the FC's GPS at the first 3D fix; "
+                     "no heading is sent until then")
+        else:
+            log.warning("declination: auto needs the FC's GPS, so --dry-run shows magnetic heading only")
+    else:
+        log.info("declination: %+.2f deg (fixed, from config)", estimator.declination)
+
     camera = Camera(cfg["camera"])
     csv_log = CsvLog(resolve_path(cfg, lcfg["csv_dir"])) if lcfg.get("csv_dir") else None
     if csv_log:
@@ -108,6 +121,17 @@ def run(cfg, mode, debug_port_override=None):
             if link:
                 link.poll()
                 link.tick()
+                if estimator.declination is None:
+                    fix = link.gps_fix()
+                    if fix is not None:
+                        try:
+                            d = declination.declination_deg(*fix)
+                        except Exception as e:  # keep running; retried on the next frame
+                            log.error("declination calculation failed: %s", e)
+                        else:
+                            estimator.set_declination(d)
+                            log.info("declination %+.2f deg from GPS fix %.5f, %.5f (%s)",
+                                     d, fix[0], fix[1], declination.MODEL_NAME)
             if got is None:
                 log.warning("no camera frames")
                 continue
@@ -144,8 +168,8 @@ def run(cfg, mode, debug_port_override=None):
 
             if csv_log:
                 csv_log.write([time.time(), t_cap, latency_ms, reading.angle_deg, reading.confidence,
-                               sample.mag_raw_deg, sample.mag_deg, sample.true_deg, sample.std_deg,
-                               int(sent), reason,
+                               sample.mag_raw_deg, sample.mag_deg, estimator.declination,
+                               sample.true_deg, sample.std_deg, int(sent), reason,
                                att.t if att else None,
                                math.degrees(att.roll) if att else None,
                                math.degrees(att.pitch) if att else None,
@@ -174,9 +198,13 @@ def run(cfg, mode, debug_port_override=None):
                     if link.fc_connected():
                         warned_fc = False
                 top = sorted(stats["reasons"].items(), key=lambda kv: -kv[1])[:3]
-                log.info("%.0f fps | valid %d%% | sent %.0f Hz | true hdg %s | %s | latency %.0f ms%s",
+                if estimator.declination is not None:
+                    decl_txt = "decl %+.1f%s" % (estimator.declination, " gps" if auto_decl else "")
+                else:
+                    decl_txt = "decl waiting for GPS fix"
+                log.info("%.0f fps | valid %d%% | sent %.0f Hz | mag %s true %s (%s) | %s | latency %.0f ms%s",
                          stats["frames"] / dt, 100.0 * stats["valid"] / max(1, stats["frames"]),
-                         stats["sent"] / dt, _fmt(s.true_deg), fc_txt, lat,
+                         stats["sent"] / dt, _fmt(s.mag_deg), _fmt(s.true_deg), decl_txt, fc_txt, lat,
                          (" | rejects " + ", ".join("%s=%d" % kv for kv in top)) if top else "")
                 stats = {"frames": 0, "valid": 0, "sent": 0, "reasons": {}}
                 last_status = now

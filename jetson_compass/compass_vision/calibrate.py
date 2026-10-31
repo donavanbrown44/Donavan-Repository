@@ -24,7 +24,7 @@ import numpy as np
 
 from .camera import Camera
 from .config import load_config, save_calibration
-from .heading import circular_mean_deg, needle_to_magnetic, wrap180, wrap360
+from .heading import circular_mean_deg, declination_is_auto, needle_to_magnetic, wrap180, wrap360
 from .needle import NeedleDetector, hsv_ranges_from_sample, sample_hsv
 
 POINT_NAMES = ["NOSE", "RIGHT", "TAIL", "LEFT"]
@@ -150,7 +150,12 @@ def cmd_swing(cfg, args):
     if not cfg["dial"]["points"]:
         sys.exit("run `calibrate setup` first")
     detector = NeedleDetector.from_config(cfg)
-    decl = float(cfg["heading"]["declination_deg"])
+    decl_cfg = cfg["heading"]["declination_deg"]
+    if args.true and declination_is_auto(decl_cfg):
+        sys.exit("--true needs a numeric declination, but declination_deg is 'auto'. Enter MAGNETIC "
+                 "references instead (handheld compass), or look the declination up and pass true "
+                 "references minus it.")
+    decl = 0.0 if declination_is_auto(decl_cfg) else float(decl_cfg)
     table = [list(p) for p in cfg["heading"]["deviation_table"]] if args.keep else []
     cam = Camera(cfg["camera"])
     ref_kind = "TRUE" if args.true else "MAGNETIC"

@@ -45,7 +45,7 @@ DEFAULTS = {
         "min_concentration": 0.90,  # 1.0 = every pixel points the same way
     },
     "heading": {
-        "declination_deg": 0.0,     # magnetic declination, EAST positive
+        "declination_deg": "auto",  # "auto" (from the FC's GPS) or degrees, EAST positive
         "deviation_table": [],      # [[measured_mag_deg, correction_deg], ...]
         "smoothing_alpha": 1.0,     # 1.0 = no smoothing (let the EKF filter)
         "max_jump_deg": 35.0,       # reject frame-to-frame jumps bigger than this
@@ -56,7 +56,7 @@ DEFAULTS = {
         "max_yaw_rate_dps": 90.0,   # don't send while yawing faster than this
     },
     "mavlink": {
-        "firmware": "px4",          # px4 | ardupilot
+        "firmware": "ardupilot",    # ardupilot | px4
         "device": "/dev/ttyTHS1",   # or e.g. udpin:0.0.0.0:14540 for SITL
         "baud": 921600,
         "source_system": 1,

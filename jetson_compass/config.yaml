@@ -33,10 +33,14 @@ needle:
   min_concentration: 0.90
 
 heading:
-  # Magnetic declination for where you fly, EAST positive, WEST negative.
-  # Look it up: https://www.ngdc.noaa.gov/geomag/calculators/magcalc.shtml
-  # The flight controller's EKF works in TRUE north, so this matters.
-  declination_deg: 0.0
+  # Magnetic declination (the EKF works in TRUE north, the compass reads MAGNETIC).
+  #   auto   = the Jetson reads the Pixhawk's GPS position and computes it with the
+  #            World Magnetic Model (WMM2025) at the first 3D fix. No heading is sent
+  #            until then, so ArduPilot won't arm before GPS lock.
+  #   number = fixed value in degrees, EAST positive, WEST negative. Use this for
+  #            flying without GPS (indoors). Look it up:
+  #            https://www.ngdc.noaa.gov/geomag/calculators/magcalc.shtml
+  declination_deg: auto
   deviation_table: []         # set by: python3 -m compass_vision.calibrate swing
   smoothing_alpha: 1.0        # 1.0 = off. The EKF already filters; smoothing adds lag.
   max_jump_deg: 35.0          # one-frame jumps bigger than this are treated as glitches
@@ -47,7 +51,7 @@ heading:
   max_yaw_rate_dps: 90.0      # damped needles lag when spinning: stop sending above this
 
 mavlink:
-  firmware: px4               # px4 | ardupilot  (decides which MAVLink message is sent)
+  firmware: ardupilot         # ardupilot | px4  (decides which MAVLink message is sent)
   # Jetson 40-pin UART (pins 8 TX / 10 RX). Nano: /dev/ttyTHS1. Xavier NX / Orin:
   # usually /dev/ttyTHS0 or /dev/ttyTHS1 depending on JetPack - confirm with
   # scripts/uart_loopback_test.py. For SITL use e.g. udpin:0.0.0.0:14540

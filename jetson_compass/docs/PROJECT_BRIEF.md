@@ -18,7 +18,7 @@ the magnetometer.
 | Physical compass (liquid-damped, red north tip) | Mounted rigidly on the airframe, face visible to the camera |
 | Camera (Jetson CSI such as IMX219, or USB) | On the **same rigid bracket** as the compass, so the two never move relative to each other |
 | Jetson (Nano / Xavier NX / Orin, any JetPack) | Runs `compass_vision`, a Python + OpenCV program. No GPU or ML needed. |
-| Pixhawk 6C Mini (PX4 v1.14+ or ArduPilot 4.1+) | Fuses the heading. Gets position from GPS/baro as before. |
+| Pixhawk 6C Mini running **ArduPilot** 4.1+ (PX4 v1.14+ also supported) | Fuses the heading. Gets position from GPS/baro as before. |
 | 3 wires: TX, RX, GND | Jetson 40-pin UART to Pixhawk TELEM2, 3.3 V logic on both ends |
 
 ## How the heading gets into the Pixhawk (decided)
@@ -47,7 +47,9 @@ Plus a 1 Hz heartbeat out. The Jetson also reads the FC's `ATTITUDE` (tilt and y
 3. Correct for the camera not being exactly overhead (oblique view, rotation, mirror)
    using a 4-point calibration on the dial rim.
 4. Convert in this order: needle angle → magnetic heading → **deviation correction** →
-   **+ declination** → true heading. The EKF works in true north.
+   **+ declination** → true heading. The EKF works in true north. Compute the declination
+   automatically from the Pixhawk's GPS position with the World Magnetic Model, once at the
+   first 3D fix, and send no heading before that. A fixed value is allowed for flying without GPS.
 5. **Don't send a reading when it can't be trusted:** needle not found or not
    needle-shaped, drone tilted past the limit, yawing too fast, or a one-frame jump.
    When nothing arrives, the FC coasts on its gyros. Never send a stale value.
@@ -64,7 +66,7 @@ Plus a 1 Hz heartbeat out. The Jetson also reads the FC's `ATTITUDE` (tilt and y
 
 | Issue | Why it matters | How it's handled |
 |---|---|---|
-| **Magnetic vs true north** | The compass points to magnetic north and the EKF wants true north. The difference is the declination, which can be 10–20° depending on location. | `declination_deg` in config |
+| **Magnetic vs true north** | The compass points to magnetic north and the EKF wants true north. The difference is the declination, which can be 10–20° depending on location. | Computed on the Jetson from the Pixhawk's GPS fix (WMM2025), or a fixed value in config |
 | **North vs south end** | A needle seen as a line reads the same at θ and θ+180° | Detect the coloured north end, and check that the blob is needle-shaped |
 | **Camera angle** | An oblique view squashes the dial into an ellipse and bends angles | Homography from 4 clicked rim points |
 | **Mount offset + airframe magnetism** | The physical compass is **also** pulled by steel screws, the battery, power wires and motor magnets. It's the same physics as the digital mag. | Compass swing builds a deviation table (what pilots do for aircraft compasses), plus a throttle interference test |

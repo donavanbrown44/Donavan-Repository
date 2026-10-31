@@ -106,6 +106,30 @@ def test_attitude_is_requested_and_read(pair):
     link.close()
 
 
+def test_gps_fix_is_requested_and_read(pair):
+    port, fc = pair
+    link = FcLink("udpout:127.0.0.1:%d" % port, firmware="ardupilot", attitude_rate_hz=0)
+    link.want_gps()
+    _fc_says_hello(fc, link, m.MAV_AUTOPILOT_ARDUPILOTMEGA)
+    link.tick()
+    cmd = recv(fc, "COMMAND_LONG")
+    assert cmd is not None and int(cmd.param1) == m.MAVLINK_MSG_ID_GPS_RAW_INT and int(cmd.param2) == 1000000
+
+    def send_gps(fix_type):
+        fc.mav.gps_raw_int_send(0, fix_type, 397392000, -1049903000, 1609000, 100, 100, 0, 0, 12)
+        end = time.time() + 1
+        while time.time() < end:
+            link.poll()
+            time.sleep(0.01)
+
+    send_gps(2)  # 2D fix: not good enough
+    assert link.gps_fix() is None
+    send_gps(3)
+    lat, lon, alt = link.gps_fix()
+    assert abs(lat - 39.7392) < 1e-6 and abs(lon + 104.9903) < 1e-6 and abs(alt - 1609.0) < 1e-6
+    link.close()
+
+
 def test_bad_firmware_name():
     with pytest.raises(ValueError):
         FcLink("udpout:127.0.0.1:9", firmware="betaflight")

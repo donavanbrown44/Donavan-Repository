@@ -11,6 +11,7 @@ from compass_vision.heading import (Attitude, DeviationTable, HeadingEstimator, 
 
 def est(**over):
     h = dict(DEFAULTS["heading"])
+    h["declination_deg"] = 0.0
     h.update(over)
     return HeadingEstimator(h)
 
@@ -82,3 +83,13 @@ def test_low_confidence_inflates_std():
 def test_circular_mean_across_north():
     m, s = circular_mean_deg([358.0, 2.0, 0.0])
     assert close(m, 0.0, 1e-6) and s < 3.0
+
+
+def test_auto_declination_waits_for_gps_then_applies():
+    e = est(declination_deg="auto")
+    s = e.update(0.0, 30.0)
+    assert not s.valid and s.reason == "waiting_for_gps_declination"
+    assert close(s.mag_deg, 330.0) and s.true_deg is None  # magnetic still available for display
+    e.set_declination(7.5)
+    s = e.update(0.03, 30.0)
+    assert s.valid and close(s.true_deg, 337.5)

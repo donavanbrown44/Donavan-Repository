@@ -16,8 +16,9 @@ both autopilots already have for vision systems, and fill in only the yaw:
 Both expect yaw relative to TRUE north in radians, NED convention
 (0 = north, +pi/2 = east).
 
-The link also sends a 1 Hz heartbeat and reads the FC's ATTITUDE so the heading
-estimator can skip readings while the drone is tilted or spinning fast.
+The link also sends a 1 Hz heartbeat, reads the FC's ATTITUDE so the heading
+estimator can skip readings while the drone is tilted or spinning fast, and (with
+declination_deg: auto) reads GPS_RAW_INT so the Jetson can compute declination.
 """
 
 import math
@@ -53,9 +54,20 @@ class FcLink(object):
         self.fc_autopilot = None
         self._last_fc_heartbeat = 0.0
         self._attitude = None
+        self._gps = None
         self._last_heartbeat_sent = 0.0
-        self._last_interval_request = 0.0
+        # Messages we ask the FC to stream (msg id -> Hz). Re-asked until they arrive,
+        # so it works whatever the port's stream-rate params (SRx_*) are set to.
+        self._wanted = {}
+        if self.attitude_rate_hz > 0:
+            self._wanted[mavlink.MAVLINK_MSG_ID_ATTITUDE] = self.attitude_rate_hz
+        self._last_rx = {}
+        self._last_request = {}
         self.sent_count = 0
+
+    def want_gps(self, rate_hz=1.0):
+        """Also stream GPS_RAW_INT (used to compute declination)."""
+        self._wanted[mavlink.MAVLINK_MSG_ID_GPS_RAW_INT] = float(rate_hz)
 
     # ------------------------------------------------------------------ inbound
     def poll(self):
@@ -76,10 +88,14 @@ class FcLink(object):
                 self.target_component = msg.get_srcComponent()
                 self.fc_autopilot = msg.autopilot
                 self._last_fc_heartbeat = now
-            elif mtype == "ATTITUDE":
+            elif mtype in ("ATTITUDE", "GPS_RAW_INT"):
                 if self.target_system is not None and msg.get_srcSystem() != self.target_system:
                     continue
-                self._attitude = Attitude(msg.roll, msg.pitch, msg.yaw, msg.yawspeed, now)
+                self._last_rx[msg.get_msgId()] = now
+                if mtype == "ATTITUDE":
+                    self._attitude = Attitude(msg.roll, msg.pitch, msg.yaw, msg.yawspeed, now)
+                elif msg.fix_type >= 3 and (msg.lat != 0 or msg.lon != 0):  # 3D fix or better
+                    self._gps = (msg.lat * 1e-7, msg.lon * 1e-7, msg.alt * 1e-3, now)
 
     def fc_connected(self, timeout=3.0):
         return (time.monotonic() - self._last_fc_heartbeat) < timeout
@@ -90,25 +106,35 @@ class FcLink(object):
             return None
         return a
 
+    def gps_fix(self, max_age=5.0):
+        """(lat_deg, lon_deg, alt_m) from the latest 3D GPS fix, or None."""
+        g = self._gps
+        if g is None or (time.monotonic() - g[3]) > max_age:
+            return None
+        return g[:3]
+
     def autopilot_name(self):
         return {mavlink.MAV_AUTOPILOT_PX4: "PX4",
                 mavlink.MAV_AUTOPILOT_ARDUPILOTMEGA: "ArduPilot"}.get(self.fc_autopilot, str(self.fc_autopilot))
 
     # ----------------------------------------------------------------- outbound
     def tick(self):
-        """Housekeeping: heartbeat at 1 Hz, ask for ATTITUDE until it arrives."""
+        """Housekeeping: heartbeat at 1 Hz, ask for wanted messages until they arrive."""
         now = time.monotonic()
         if now - self._last_heartbeat_sent >= 1.0:
             self._last_heartbeat_sent = now
             self.mav.heartbeat_send(mavlink.MAV_TYPE_ONBOARD_CONTROLLER,
                                     mavlink.MAV_AUTOPILOT_INVALID, 0, 0, mavlink.MAV_STATE_ACTIVE)
-        if (self.fc_connected() and self.attitude(max_age=2.0) is None
-                and self.attitude_rate_hz > 0 and now - self._last_interval_request >= 3.0):
-            self._last_interval_request = now
-            self.mav.command_long_send(
-                self.target_system, self.target_component,
-                mavlink.MAV_CMD_SET_MESSAGE_INTERVAL, 0,
-                mavlink.MAVLINK_MSG_ID_ATTITUDE, int(1e6 / self.attitude_rate_hz), 0, 0, 0, 0, 0)
+        if not self.fc_connected():
+            return
+        for msg_id, rate_hz in self._wanted.items():
+            silent = now - self._last_rx.get(msg_id, 0.0) > max(2.0, 3.0 / rate_hz)
+            if silent and now - self._last_request.get(msg_id, 0.0) >= 3.0:
+                self._last_request[msg_id] = now
+                self.mav.command_long_send(
+                    self.target_system, self.target_component,
+                    mavlink.MAV_CMD_SET_MESSAGE_INTERVAL, 0,
+                    msg_id, int(1e6 / rate_hz), 0, 0, 0, 0, 0)
 
     def send_heading(self, t_capture, yaw_rad, std_rad, quality=100):
         """Send one heading measurement.

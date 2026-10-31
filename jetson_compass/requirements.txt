@@ -5,6 +5,7 @@
 # PyYAML also come with JetPack / Ubuntu (python3-numpy, python3-yaml).
 pymavlink
 pyserial
+pygeomag>=1.1    # World Magnetic Model 2025, for declination_deg: auto
 PyYAML
 
 # for running the tests (optional)

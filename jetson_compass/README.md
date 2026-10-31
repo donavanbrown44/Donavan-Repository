@@ -49,7 +49,7 @@ Do **not** connect TELEM pin 1 (5 V) to the Jetson. Leave CTS/RTS unconnected an
 git clone <this repo> ~/Donavan-Repository
 cd ~/Donavan-Repository/jetson_compass
 sudo apt install python3-pip python3-yaml python3-numpy
-pip3 install --user pymavlink pyserial
+pip3 install --user pymavlink pyserial pygeomag
 sudo usermod -aG dialout $USER          # serial port access, then log out/in
 ```
 
@@ -63,15 +63,40 @@ Usually it's `ttyTHS1` on a Nano, and `ttyTHS0` or `ttyTHS1` on Xavier NX and Or
 If a login prompt or other stray data shows up, run `sudo systemctl disable --now nvgetty`.
 Put the working device in `config.yaml → mavlink.device`.
 
-**Set `config.yaml`:** `camera.source` (csi/usb), `mavlink.firmware` (px4/ardupilot),
-and **`heading.declination_deg`** for where you fly (east positive, from the
-[NOAA calculator](https://www.ngdc.noaa.gov/geomag/calculators/magcalc.shtml)).
+**Set `config.yaml`:** `camera.source` (csi/usb). The defaults are already
+`mavlink.firmware: ardupilot` and `heading.declination_deg: auto`.
+
+**Declination is automatic.** The compass reads magnetic north and ArduPilot's EKF
+works in true north. With `auto`, the Jetson asks the Pixhawk for its GPS position
+(`GPS_RAW_INT`) and computes the declination once at the first 3D fix, using the World
+Magnetic Model 2025 (`pygeomag`, offline, no internet needed). It sends **no heading until
+then**, so the drone won't arm before GPS lock. The value shows in the status line and
+in each CSV row. For flying without GPS (indoors), put a fixed number there instead
+(east positive, from the [NOAA calculator](https://www.ngdc.noaa.gov/geomag/calculators/magcalc.shtml)).
 
 ## 3. Flight controller parameters
 
 Leave the GPS/baro position settings alone. Only the yaw source changes.
 
-### PX4 (v1.14+), in QGroundControl
+### ArduPilot (4.1+), in Mission Planner
+
+| Parameter | Value | Why |
+|---|---|---|
+| `SERIAL2_PROTOCOL` | 2 | MAVLink2 on TELEM2 |
+| `SERIAL2_BAUD` | 921 | 921600, must match `mavlink.baud` |
+| `BRD_SER2_RTSCTS` | 0 | no flow control wires |
+| `VISO_TYPE` | 1 | MAVLink vision input (reboot after setting) |
+| `EK3_SRC1_YAW` | 6 | yaw from ExternalNav (us) |
+| `EK3_SRC1_POSXY` / `VELXY` / `POSZ` | unchanged (GPS/GPS/Baro) | **never 6**, we don't send position |
+| `COMPASS_ENABLE` | 0 | magnetometers off |
+| `VISO_YAW_M_NSE` | 0.05 | yaw noise in rad (~3°). ArduPilot uses this, not our per-frame value. |
+| `VISO_DELAY_MS` | 80 to start | then use the value from `estimate_latency.py` |
+
+If data stops, pre-arm reports "VisOdom: not healthy", which is what you want.
+You don't need to change the `SR2_*` stream rates. The Jetson asks for the
+`ATTITUDE` and `GPS_RAW_INT` messages it needs.
+
+### PX4 (v1.14+), only if you ever switch (set `mavlink.firmware: px4`)
 
 | Parameter | Value | Why |
 |---|---|---|
@@ -89,22 +114,6 @@ Leave the GPS/baro position settings alone. Only the yaw source changes.
 Check it in the MAVLink console: `listener vehicle_visual_odometry` should update,
 and `listener estimator_status_flags` should show `cs_ev_yaw: True`.
 
-### ArduPilot (4.1+), in Mission Planner
-
-| Parameter | Value | Why |
-|---|---|---|
-| `SERIAL2_PROTOCOL` | 2 | MAVLink2 on TELEM2 |
-| `SERIAL2_BAUD` | 921 | 921600, must match `mavlink.baud` |
-| `BRD_SER2_RTSCTS` | 0 | no flow control wires |
-| `VISO_TYPE` | 1 | MAVLink vision input (reboot after setting) |
-| `EK3_SRC1_YAW` | 6 | yaw from ExternalNav (us) |
-| `EK3_SRC1_POSXY` / `VELXY` / `POSZ` | unchanged (GPS/GPS/Baro) | **never 6**, we don't send position |
-| `COMPASS_ENABLE` | 0 | magnetometers off |
-| `VISO_YAW_M_NSE` | 0.05 | yaw noise in rad (~3°). ArduPilot uses this, not our per-frame value. |
-| `VISO_DELAY_MS` | 80 to start | then use the value from `estimate_latency.py` |
-
-If data stops, pre-arm reports "VisOdom: not healthy", which is what you want.
-
 > `mavlink.firmware` in `config.yaml` must match what's on the Pixhawk. `scripts/fc_link_check.py` warns if it doesn't.
 
 ## 4. Calibrate
@@ -121,7 +130,8 @@ python3 -m compass_vision.calibrate setup
 python3 -m compass_vision.calibrate swing
 #    Point the nose at a known MAGNETIC heading (handheld compass a few metres away,
 #    or a road/runway edge), type it, repeat. 8 headings (every 45°) is good,
-#    1 heading = simple offset. Use --true if your references are true headings.
+#    1 heading = simple offset. References must be MAGNETIC with declination: auto
+#    (with a fixed declination number you can use --true for true-heading references).
 ```
 
 Results go to `calibration.yaml`, which overrides `config.yaml`. You can edit it by hand.
@@ -135,7 +145,7 @@ python3 -m compass_vision               # the real thing: send heading to the FC
 ```
 
 The status line prints every 2 s:
-`30 fps | valid 100% | sent 30 Hz | true hdg 123.4 | FC PX4 yaw 122.9 | latency 6 ms | rejects ...`
+`30 fps | valid 100% | sent 30 Hz | mag 115.9 true 123.4 (decl +7.5 gps) | FC ArduPilot yaw 122.9 | latency 6 ms`
 
 - **Debug video:** open `http://<jetson-ip>:8080/` in a browser (raw view, rectified dial, mask, heading).
 - **Logs:** `logs/compass_*.csv`, one row per frame (our heading, FC heading and attitude, reject reason, latency).
@@ -169,7 +179,8 @@ Feed it a still image (`--source`) and the simulated vehicle's heading should sn
 | Status shows `no_needle_pixels` / `blob_*` rejects | Lighting changed or colour range too tight. Watch the debug video and re-run `calibrate setup`. |
 | Heading turns the **wrong way** when you rotate the drone | Rim points clicked in the wrong order (must be nose, right, tail, left) |
 | Heading off by ~180° | You sampled the south end's colour. Click the north tip. |
-| Heading off by a constant | Run the swing, and check the declination sign (east = +) |
+| Status shows `true ---` / `waiting_for_gps_declination`, nothing sent | No 3D GPS fix yet. Wait for lock, or set a fixed `declination_deg` for flying without GPS. |
+| Heading off by a constant | Run the swing. With a fixed declination, check its sign (east = +). |
 | FC heading jumps when the drone tilts or spins fast | Expected: those readings are skipped and the FC coasts on its gyros. Raise `max_tilt_deg` / `max_yaw_rate_dps` only if your compass handles it. |
 | Drone circles in position hold | Heading error. Recheck declination, swing and delay. |
 
@@ -177,7 +188,8 @@ Feed it a still image (`--source`) and the simulated vehicle's heading should sn
 
 ```
 compass_vision/   main.py (loop), needle.py (vision), heading.py (math + gates),
-                  fc_link.py (MAVLink), camera.py, calibrate.py, debug_stream.py, config.py
+                  fc_link.py (MAVLink), declination.py (WMM from GPS), camera.py,
+                  calibrate.py, debug_stream.py, config.py
 scripts/          uart_loopback_test.py, fc_link_check.py, estimate_latency.py, compass-vision.service
 tests/            synthetic compass images, heading math, MAVLink round trip, latency estimate
 config.yaml       your settings     calibration.yaml   written by the calibrate tool
