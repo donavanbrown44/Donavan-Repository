@@ -1,0 +1,64 @@
+# Compass-vision settings. Edit by hand.
+# Calibration values (dial points, needle colour, deviation table) are written by
+# the calibrate tool to calibration.yaml and override anything set here.
+
+calibration_file: calibration.yaml
+
+camera:
+  source: csi                 # csi | usb | gstreamer | file
+  csi_sensor_id: 0
+  # Cap exposure to cut motion blur from vibration, in nanoseconds "min max".
+  # Needs decent light (add an LED). Empty = camera auto exposure.
+  csi_exposure_range_ns: ""   # e.g. "100000 2000000"  (0.1-2 ms)
+  usb_index: 0
+  gstreamer_pipeline: ""      # only for source: gstreamer (must end in appsink)
+  file_path: ""               # only for source: file (image or video, for bench tests)
+  width: 1280
+  height: 720
+  fps: 30
+
+dial:
+  points: null                # set by: python3 -m compass_vision.calibrate setup
+  annulus: [0.15, 0.85]       # needle search ring, fraction of dial radius (inner, outer)
+
+needle:
+  # Colour of the NORTH end of the needle, OpenCV HSV (H 0-179). Default: red.
+  # `calibrate setup` replaces this when you click the needle tip.
+  hsv_ranges:
+    - [0, 90, 60, 10, 255, 255]
+    - [170, 90, 60, 179, 255, 255]
+  min_area_frac: 0.002
+  max_area_frac: 0.25
+  min_radial_extent: 0.25
+  min_concentration: 0.90
+
+heading:
+  # Magnetic declination for where you fly, EAST positive, WEST negative.
+  # Look it up: https://www.ngdc.noaa.gov/geomag/calculators/magcalc.shtml
+  # The flight controller's EKF works in TRUE north, so this matters.
+  declination_deg: 0.0
+  deviation_table: []         # set by: python3 -m compass_vision.calibrate swing
+  smoothing_alpha: 1.0        # 1.0 = off. The EKF already filters; smoothing adds lag.
+  max_jump_deg: 35.0          # one-frame jumps bigger than this are treated as glitches
+  reacquire_frames: 6         # ...unless this many frames in a row agree
+  reset_after_s: 0.5
+  base_std_deg: 3.0           # heading noise (1 sigma) reported to PX4
+  max_tilt_deg: 20.0          # needle compasses misread when tilted: stop sending above this
+  max_yaw_rate_dps: 90.0      # damped needles lag when spinning: stop sending above this
+
+mavlink:
+  firmware: px4               # px4 | ardupilot  (decides which MAVLink message is sent)
+  # Jetson 40-pin UART (pins 8 TX / 10 RX). Nano: /dev/ttyTHS1. Xavier NX / Orin:
+  # usually /dev/ttyTHS0 or /dev/ttyTHS1 depending on JetPack - confirm with
+  # scripts/uart_loopback_test.py. For SITL use e.g. udpin:0.0.0.0:14540
+  device: /dev/ttyTHS1
+  baud: 921600                # must match the FC port (PX4 SER_TEL2_BAUD / ArduPilot SERIAL2_BAUD)
+  source_system: 1            # same system ID as the vehicle
+  source_component: 197       # MAV_COMP_ID_VISUAL_INERTIAL_ODOMETRY
+  max_send_hz: 30.0
+  attitude_rate_hz: 20.0      # FC attitude used for the tilt / yaw-rate gates
+
+logging:
+  csv_dir: logs               # one CSV per run; "" to disable
+  debug_port: 8080            # MJPEG debug video at http://<jetson-ip>:8080/ ; 0 = off
+  status_period_s: 2.0

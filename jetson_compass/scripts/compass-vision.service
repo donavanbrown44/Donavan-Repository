@@ -1,0 +1,26 @@
+# Start compass-vision automatically at boot.
+#
+# 1. Replace CHANGE_ME with your Jetson username (2 places) and fix the path if
+#    you cloned the repo somewhere else.
+# 2. sudo cp scripts/compass-vision.service /etc/systemd/system/
+#    sudo systemctl daemon-reload
+#    sudo systemctl enable --now compass-vision
+# 3. Watch it: journalctl -u compass-vision -f
+
+[Unit]
+Description=Physical compass camera -> heading -> Pixhawk
+After=nvargus-daemon.service
+Wants=nvargus-daemon.service
+
+[Service]
+Type=simple
+User=CHANGE_ME
+SupplementaryGroups=dialout video
+WorkingDirectory=/home/CHANGE_ME/Donavan-Repository/jetson_compass
+ExecStart=/usr/bin/python3 -m compass_vision --config config.yaml
+Environment=PYTHONUNBUFFERED=1
+Restart=always
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target

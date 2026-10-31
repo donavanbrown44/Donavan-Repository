@@ -1,0 +1,11 @@
+# Install with: pip3 install --user -r requirements.txt
+#
+# Do NOT pip install opencv-python on the Jetson. Use the OpenCV that comes with
+# JetPack (it is built with GStreamer, which the CSI camera needs). numpy and
+# PyYAML also come with JetPack / Ubuntu (python3-numpy, python3-yaml).
+pymavlink
+pyserial
+PyYAML
+
+# for running the tests (optional)
+# pytest
