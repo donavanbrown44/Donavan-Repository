@@ -17,6 +17,7 @@ the magnetometer.
 |---|---|
 | Physical compass (liquid-damped, red north tip) | Mounted rigidly on the airframe, face visible to the camera |
 | Camera (Jetson CSI such as IMX219, or USB) | On the **same rigid bracket** as the compass, so the two never move relative to each other |
+| Second camera, looking straight down | Measures real rotation from the ground, to hold the heading steady and catch compass drift |
 | Jetson (Nano / Xavier NX / Orin, any JetPack) | Runs `compass_vision`, a Python + OpenCV program. No GPU or ML needed. |
 | Pixhawk 6C Mini running **ArduPilot** 4.1+ (PX4 v1.14+ also supported) | Fuses the heading. Gets position from GPS/baro as before. |
 | 3 wires: TX, RX, GND | Jetson 40-pin UART to Pixhawk TELEM2, 3.3 V logic on both ends |
@@ -59,6 +60,10 @@ Plus a 1 Hz heartbeat out. The Jetson also reads the FC's `ATTITUDE` (tilt and y
 9. Include tools for: dial/colour calibration, a compass swing (deviation table), a UART loopback test,
    an FC link check, and latency estimation.
 10. Allow testing without hardware: synthetic-image unit tests, video-file input, SITL.
+11. **Loiter must be rock solid: no slow rotation.** A second, ground-facing camera measures the
+    drone's real rotation and acts as a feedback loop on the compass. It holds the heading outright in
+    Loiter/PosHold/Brake, lets the compass correct it only slowly in other modes, and reports compass
+    drift to the ground station. If the camera loses the ground, the heading falls back to the compass smoothly.
 
 **Non-goals:** machine learning, custom firmware, position estimation, any FC change beyond parameters.
 
@@ -75,6 +80,7 @@ Plus a 1 Hz heartbeat out. The Jetson also reads the FC's `ATTITUDE` (tilt and y
 | **Dropouts** | Glare, prop shadows, a loose cable | Send nothing, so the FC uses its gyros. ArduPilot won't arm without the data, and PX4 stops fusing after ~200 ms of silence. |
 | **Startup order** | The Jetson boots in ~30–60 s and the Pixhawk in ~5 s | The FC fails pre-arm (no heading) until data flows. systemd restarts the program if it crashes. |
 | **Camera practicalities** | Pi-style lenses are focused at infinity. Vibration blurs the image. Auto-exposure shifts colours. | Refocus the lens for the close range, mount on vibration damping together, cap exposure, add a small LED |
+| **Slow compass creep in Loiter** | Loiter holds the EKF heading. If the compass creeps (needle settling, magnetic field from the power wires changing as current rises), the drone slowly yaws with it. | Ground camera holds the heading (see requirement 11). Drift is logged and reported. |
 | **Trust before flying** | You don't want the first test of the heading to be in the air | Shadow mode logs our heading next to the FC's existing one while sending nothing |
 
 ## Bring-up and test plan
@@ -91,4 +97,7 @@ Plus a 1 Hz heartbeat out. The Jetson also reads the FC's `ATTITUDE` (tilt and y
    Cover the camera: the FC should keep its heading on gyros and report the loss, and ArduPilot should refuse to arm.
 7. **Fly:** hover in a mode that doesn't need heading (Stabilize/Manual), then Position/Loiter.
    Circling or "toilet-bowling" in position hold means the heading is wrong (check declination, swing, delay). Keep a kill switch ready.
-8. **Analyse:** CSV + FC log. Look at EKF yaw innovations, rejected-frame reasons, and latency.
+8. **Loiter hold test:** hover in Loiter for 3+ minutes. `out_deg` in the CSV should be flat and the drone
+   shouldn't rotate. Plot `compass_drift_deg` against battery current from the FC log: if they climb
+   together, the power wiring is affecting the compass (the camera hides it, but fix the cause).
+9. **Analyse:** CSV + FC log. Look at EKF yaw innovations, rejected-frame reasons, and latency.

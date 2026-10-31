@@ -64,6 +64,33 @@ mavlink:
   max_send_hz: 30.0
   attitude_rate_hz: 20.0      # FC attitude used for the tilt / yaw-rate gates
 
+visual_yaw:
+  # A second camera looking at the ground measures how much the drone REALLY turns
+  # (magnetism can't affect it). The heading sent to the Pixhawk is the compass
+  # heading held steady by this camera: in Loiter/PosHold/Brake the compass can't
+  # move it at all, so the drone can't slowly rotate. Anywhere else the compass
+  # pulls it back to absolute north slowly (tau_s). If the camera loses the ground
+  # (night, water, blank floor) it falls back to the compass smoothly. If this
+  # camera fails to open, the program logs an error and runs on the compass alone.
+  enabled: true
+  camera:
+    source: csi               # csi | usb | gstreamer | file
+    csi_sensor_id: 1          # Orin Nano dev kit: compass camera on CAM0, ground camera on CAM1
+    usb_index: 1
+    gstreamer_pipeline: ""
+    file_path: ""
+    width: 1280
+    height: 720
+    fps: 30
+  orientation: down           # down (best) | forward (only if NOT on a yaw-stabilised gimbal)
+  hfov_deg: 62.0              # forward camera only: horizontal field of view
+  invert: false               # the program warns if this needs flipping
+  roi: [0.0, 0.0, 1.0, 1.0]   # use only this part of the image [x0, y0, x1, y1]; crop out legs/props
+  tau_s: 60.0                 # tracking: compass pulls the heading with this time constant (s)
+  tau_lost_s: 3.0             # not tracking: blend back to the compass this fast (s)
+  hold_modes: [LOITER, POSHOLD, BRAKE]   # ArduCopter modes where the camera holds heading outright
+  drift_warn_deg: 8.0         # tell the ground station when the compass disagrees by more than this
+
 logging:
   csv_dir: logs               # one CSV per run; "" to disable
   debug_port: 8080            # MJPEG debug video at http://<jetson-ip>:8080/ ; 0 = off

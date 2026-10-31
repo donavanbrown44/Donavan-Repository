@@ -52,6 +52,7 @@ class FcLink(object):
         self.target_system = None
         self.target_component = None
         self.fc_autopilot = None
+        self.flight_mode = None
         self._last_fc_heartbeat = 0.0
         self._attitude = None
         self._gps = None
@@ -87,6 +88,7 @@ class FcLink(object):
                 self.target_system = msg.get_srcSystem()
                 self.target_component = msg.get_srcComponent()
                 self.fc_autopilot = msg.autopilot
+                self.flight_mode = mavutil.mode_string_v10(msg)  # e.g. "LOITER"
                 self._last_fc_heartbeat = now
             elif mtype in ("ATTITUDE", "GPS_RAW_INT"):
                 if self.target_system is not None and msg.get_srcSystem() != self.target_system:
@@ -161,6 +163,11 @@ class FcLink(object):
             self.mav.vision_position_estimate_send(time_usec, 0.0, 0.0, 0.0, 0.0, 0.0,
                                                    float(yaw_rad), cov, 0)
         self.sent_count += 1
+
+    def send_statustext(self, text, severity=None):
+        """Message for the ground station (shows in Mission Planner's Messages tab / HUD)."""
+        sev = mavlink.MAV_SEVERITY_WARNING if severity is None else severity
+        self.mav.statustext_send(sev, text.encode("ascii", "replace")[:50])
 
     def close(self):
         try:

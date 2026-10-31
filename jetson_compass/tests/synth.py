@@ -77,3 +77,35 @@ def camera_view(top_img, out_size=(1280, 720), rot_deg=37.0, tilt=0.25, mirror=F
         img = np.clip(img.astype(np.float32) + rng.normal(0, noise, img.shape), 0, 255).astype(np.uint8)
     pts = cv2.perspectiveTransform(rim_points_top().reshape(-1, 1, 2), H).reshape(-1, 2)
     return img, pts.tolist()
+
+
+# ---------------------------------------------------------------- ground camera
+def make_ground(size=2400, seed=1):
+    """Random grass/dirt-like texture to stand in for the ground under the drone."""
+    rng = np.random.RandomState(seed)
+    base = rng.rand(size // 8, size // 8).astype(np.float32)
+    img = cv2.resize(base, (size, size), interpolation=cv2.INTER_CUBIC)
+    img += 0.35 * cv2.resize(rng.rand(size // 2, size // 2).astype(np.float32), (size, size))
+    img = cv2.normalize(img, None, 0, 255, cv2.NORM_MINMAX).astype(np.uint8)
+    for _ in range(400):  # stones / tufts
+        c = (int(rng.randint(0, size)), int(rng.randint(0, size)))
+        cv2.circle(img, c, int(rng.randint(3, 12)), int(rng.randint(0, 255)), -1)
+    return cv2.cvtColor(img, cv2.COLOR_GRAY2BGR)
+
+
+def ground_view(ground, yaw_cw_deg, offset=(0.0, 0.0), scale=1.0, out_size=(640, 480), noise=3.0, seed=0):
+    """What a straight-down camera sees when the drone has yawed `yaw_cw_deg` clockwise.
+
+    The ground appears to turn the OTHER way (counter-clockwise) in the image.
+    getRotationMatrix2D's positive angle is counter-clockwise, hence +yaw here.
+    """
+    w, h = out_size
+    gc = (ground.shape[1] / 2.0 + offset[0], ground.shape[0] / 2.0 + offset[1])
+    M = cv2.getRotationMatrix2D(gc, yaw_cw_deg, scale)
+    M[0, 2] += w / 2.0 - gc[0]
+    M[1, 2] += h / 2.0 - gc[1]
+    img = cv2.warpAffine(ground, M, (w, h), flags=cv2.INTER_LINEAR)
+    if noise:
+        rng = np.random.RandomState(seed)
+        img = np.clip(img.astype(np.float32) + rng.normal(0, noise, img.shape), 0, 255).astype(np.uint8)
+    return img

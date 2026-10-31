@@ -9,11 +9,12 @@ magnetometer.
   an external-vision yaw measurement over MAVLink, which PX4 and ArduPilot both accept natively.
 
 ```
-camera ──► find red north tip ──► needle angle ──► heading (+deviation, +declination)
-                                                         │  skip if tilted / spinning / glitch
-                                                         ▼
+compass camera ──► red north tip ──► needle angle ──► heading (+deviation, +declination from GPS)
+                                                          │  skip if tilted / spinning / glitch
+ground camera ──► tracked ground features ──► real rotation ──►  hold steady (Loiter: locked)
+                                                          ▼
                               Pixhawk EKF ◄── MAVLink over UART (TELEM2)
-                              (PX4: ODOMETRY yaw  |  ArduPilot: VISION_POSITION_ESTIMATE yaw)
+                              (ArduPilot: VISION_POSITION_ESTIMATE yaw  |  PX4: ODOMETRY yaw)
 ```
 
 ---
@@ -48,6 +49,28 @@ calibration corrects for the angle.
 | Pin 6 (GND) | — | Pin 6 (GND) |
 
 Do **not** connect TELEM pin 1 (5 V) to the Jetson. Leave CTS/RTS unconnected and turn flow control off on the FC.
+
+**Ground camera (keeps Loiter rock solid).** In Loiter, ArduPilot holds whatever
+heading its EKF believes. If the compass reading creeps (needle settling, or the
+power wires' magnetic field changing as current rises while the battery sags),
+the drone slowly yaws with it. A second camera looking **straight down** at the
+ground measures how much the drone *really* turns, which no magnet can affect:
+- **In LOITER / POSHOLD / BRAKE** the camera holds the heading outright. The compass can't move it.
+- **In other modes** the compass pulls the heading back toward absolute north slowly
+  (time constant `tau_s`, 60 s), so short-term creep is filtered out.
+- **Compass drift** (compass minus the camera-held heading) is logged, shown in the
+  status line, and sent to Mission Planner as a message when it passes 8°.
+- **Cross-checks:** every camera rotation is checked against the Pixhawk's gyro, and
+  moving things (water, shadows) are rejected.
+- **If the camera can't see the ground** (night, water, blank floor) the heading
+  blends back to the compass over ~3 s, with no jump.
+
+Mount it on CAM1 of the Orin Nano dev kit (the compass camera is on CAM0), looking
+down. The view needs some texture (grass, dirt, gravel, concrete) and light. If
+landing gear or prop tips show in the image, crop them out with `visual_yaw.roi`.
+A forward camera also works if it is fixed to the frame, but not on a
+yaw-stabilised gimbal. If the second camera isn't there or won't open, the
+program says so and runs on the compass alone.
 
 ## 2. Jetson setup
 
@@ -161,9 +184,15 @@ python3 -m compass_vision               # the real thing: send heading to the FC
 ```
 
 The status line prints every 2 s:
-`30 fps | valid 100% | sent 30 Hz | mag 115.9 true 123.4 (decl +7.5 gps) | FC ArduPilot yaw 122.9 | latency 6 ms`
+`30 fps | valid 100% | sent 30 Hz | out 340.0 (compass 334.5, mag 331.3, decl +3.2 gps) | cam 239 pts drift -5.5 HOLD | FC ArduPilot LOITER yaw 340.1 | latency 7 ms`
 
-- **Debug video:** open `http://<jetson-ip>:8080/` in a browser (raw view, rectified dial, mask, heading).
+`out` is what goes to the Pixhawk. `compass` is the raw compass heading. `drift`
+is how far the compass has wandered from what the ground camera says.
+`HOLD` means the camera is locking the heading (Loiter/PosHold/Brake).
+
+- **Debug video:** open `http://<jetson-ip>:8080/` in a browser (compass view, rectified dial, ground camera with tracked points).
+- **Check the ground camera's direction once:** rotate the drone by hand clockwise (seen from above). `out`
+  should increase. If it warns `visual yaw turns the opposite way to the gyro`, set `visual_yaw.invert: true`.
 - **Logs:** `logs/compass_*.csv`, one row per frame (our heading, FC heading and attitude, reject reason, latency).
 - **Latency:** in shadow mode, props off, twist the drone left/right for ~20 s, then
   `python3 scripts/estimate_latency.py logs/<file>.csv`. It prints the `EKF2_EV_DELAY` / `VISO_DELAY_MS` to use.
@@ -177,7 +206,7 @@ Follow the bring-up order in [docs/PROJECT_BRIEF.md](docs/PROJECT_BRIEF.md#bring
 
 ```bash
 pip3 install --user pytest && python3 -m pytest tests     # synthetic dial images + MAVLink round trip
-python3 -m compass_vision --dry-run --source some_video.mp4
+python3 -m compass_vision --dry-run --source some_video.mp4 --ground-source ground_video.mp4
 ```
 
 **SITL** (checks that the FC accepts the messages): set the params above in the simulator.
@@ -199,14 +228,17 @@ Feed it a still image (`--source`) and the simulated vehicle's heading should sn
 | Heading off by a constant | Run the swing. With a fixed declination, check its sign (east = +). |
 | FC heading jumps when the drone tilts or spins fast | Expected: those readings are skipped and the FC coasts on its gyros. Raise `max_tilt_deg` / `max_yaw_rate_dps` only if your compass handles it. |
 | Drone circles in position hold | Heading error. Recheck declination, swing and delay. |
+| `cam lost (too_few_features)` | Ground too plain or too dark, or lens not focused. Add light, or fly over texture. |
+| `cam lost (gyro_mismatch)` while turning | Set `visual_yaw.invert: true` (it warns), or the camera mount is loose or vibrating. |
+| Frequent `Compass drift` messages | The camera is holding heading for you, but something magnetic is changing near the compass. Compare `compass_drift_deg` in the CSV with battery current in the FC log: if they rise together, move the compass away from the power wires. |
 
 ## Layout
 
 ```
 compass_vision/   main.py (loop), needle.py (vision), heading.py (math + gates),
-                  fc_link.py (MAVLink), declination.py (WMM from GPS), camera.py,
-                  calibrate.py, debug_stream.py, config.py
+                  visual_yaw.py (ground camera hold + drift check), fc_link.py (MAVLink),
+                  declination.py (WMM from GPS), camera.py, calibrate.py, debug_stream.py, config.py
 scripts/          uart_loopback_test.py, fc_link_check.py, estimate_latency.py, compass-vision.service
-tests/            synthetic compass images, heading math, MAVLink round trip, latency estimate
+tests/            synthetic compass + ground images, heading math, Loiter hold, MAVLink round trip
 config.yaml       your settings     calibration.yaml   written by the calibrate tool
 ```

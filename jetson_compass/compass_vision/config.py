@@ -64,6 +64,24 @@ DEFAULTS = {
         "max_send_hz": 30.0,
         "attitude_rate_hz": 20.0,
     },
+    "visual_yaw": {
+        # Second camera looking at the world (ideally straight down) that measures
+        # real rotation, to hold the heading steady and catch compass drift.
+        "enabled": False,
+        "camera": {"source": "csi", "csi_sensor_id": 1, "csi_exposure_range_ns": "", "usb_index": 1,
+                   "gstreamer_pipeline": "", "file_path": "", "width": 1280, "height": 720, "fps": 30},
+        "orientation": "down",      # down | forward (forward: must not be yaw-stabilised by a gimbal)
+        "hfov_deg": 62.0,           # horizontal field of view, only used for forward
+        "invert": False,            # flip if it turns the opposite way to the gyro (it will warn)
+        "roi": [0.0, 0.0, 1.0, 1.0],  # part of the image to use [x0, y0, x1, y1] (crop out legs/props)
+        "min_features": 60,
+        "min_inliers": 25,
+        "max_gyro_mismatch_dps": 15.0,
+        "tau_s": 60.0,              # while tracking: how slowly the compass may pull the heading
+        "tau_lost_s": 3.0,          # tracking lost: blend back to the compass this fast
+        "hold_modes": ["LOITER", "POSHOLD", "BRAKE"],  # compass can't pull the heading at all
+        "drift_warn_deg": 8.0,      # warn the ground station above this compass disagreement
+    },
     "logging": {
         "csv_dir": "logs",          # "" disables CSV logging
         "debug_port": 0,            # >0 serves MJPEG debug video on this port
