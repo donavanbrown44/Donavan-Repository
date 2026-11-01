@@ -192,6 +192,17 @@ The status line prints every 2 s:
 is how far the compass has wandered from what the ground camera says.
 `HOLD` means the camera is locking the heading (Loiter/PosHold/Brake).
 
+**Needle settling time.** A real compass needle trails a turn and then swings for a
+few seconds before it finds north again. The program compares the compass with the
+Pixhawk's gyro: a perfect compass would change exactly as fast as the drone turns,
+so anything left over is the needle swinging. Compass readings are skipped while the
+drone is turning (over 15°/s) and until the needle has stopped swinging, and the
+log tells you how long your compass takes: `needle settled 2.1 s after the turn`.
+- **With the ground camera:** the heading carries straight through turns on the camera.
+- **Without it:** nothing is sent until the needle settles, and ArduPilot coasts on its gyros meanwhile.
+
+`calibrate swing` also waits for the needle to stop moving before it takes a reading.
+
 - **Debug video:** open `http://<jetson-ip>:8080/` in a browser (compass view, rectified dial, ground camera with tracked points).
 - **Check the ground camera's direction once:** rotate the drone by hand clockwise (seen from above). `out`
   should increase. If it warns `visual yaw turns the opposite way to the gyro`, set `visual_yaw.invert: true`.
@@ -230,6 +241,7 @@ Feed it a still image (`--source`) and the simulated vehicle's heading should sn
 | Heading off by a constant | Run the swing. With a fixed declination, check its sign (east = +). |
 | FC heading jumps when the drone tilts or spins fast | Expected: those readings are skipped and the FC coasts on its gyros. Raise `max_tilt_deg` / `max_yaw_rate_dps` only if your compass handles it. |
 | Drone circles in position hold | Heading error. Recheck declination, swing and delay. |
+| Lots of `needle_settling` rejects, or settle times over ~5 s | The compass is poorly damped, or the mount vibrates. A liquid-filled compass settles faster. Check the mount is solid. |
 | `cam lost (too_few_features)` | Ground too plain or too dark, or lens not focused. Add light, or fly over texture. |
 | `cam lost (gyro_mismatch)` while turning | Set `visual_yaw.invert: true` (it warns), or the camera mount is loose or vibrating. |
 | Frequent `Compass drift` messages | The camera is holding heading for you, but something magnetic is changing near the compass. Compare `compass_drift_deg` in the CSV with battery current in the FC log: if they rise together, move the compass away from the power wires. |

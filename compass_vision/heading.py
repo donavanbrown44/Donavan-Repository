@@ -6,9 +6,11 @@
     -> true heading               = magnetic + declination        (the EKF works in TRUE north)
 
 Then the reading is gated:
-  - tilt   : a needle compass reads wrong when tilted (it is a horizontal instrument)
+  - tilt    : a needle compass reads wrong when tilted (it is a horizontal instrument)
   - yaw rate: a damped needle lags/overshoots while the drone is spinning
-  - jumps  : a single bad frame (glare, prop shadow) must not yank the heading around
+  - settling: after a turn the needle keeps swinging for a few seconds before it
+              finds north again; those readings are skipped (see SettleDetector)
+  - jumps   : a single bad frame (glare, prop shadow) must not yank the heading around
 If a reading fails a gate it is simply not sent. The FC then coasts on its gyros
 instead of fusing a bad number.
 """
@@ -95,6 +97,103 @@ def needle_to_magnetic(needle_deg):
     return wrap360(-needle_deg)
 
 
+class SettleDetector(object):
+    """Has the needle finished swinging after a turn?
+
+    A perfect compass's heading changes exactly as fast as the gyro says the drone
+    turns. So: compass heading minus gyro-integrated rotation = the needle's own
+    motion (lag, swing, overshoot). While that residual is still trending, the needle
+    hasn't settled. "Trending" = linear-fit slope over `window_s` is above
+    `max_rate_dps` AND clearly above what the reading noise alone could produce, so
+    vibration jitter doesn't keep it unsettled forever. Must stay calm for `hold_s`.
+
+    While the gyro says the drone is turning faster than `turn_dps`, the needle is
+    trailing the turn by definition, so it isn't trusted at all.
+
+    Adapts to whatever compass you fit; no fixed timer to tune. Also records how long
+    the needle took to settle after each turn, as a measure of your compass.
+    """
+
+    def __init__(self, max_rate_dps=3.0, turn_dps=15.0, window_s=1.0, hold_s=0.3, give_up_s=10.0):
+        self.max_rate = float(max_rate_dps)
+        self.turn_dps = float(turn_dps)  # turning faster than this: the needle is lagging, full stop
+        self.window = float(window_s)
+        self.hold = float(hold_s)
+        self.give_up = float(give_up_s)
+        self.enabled = self.max_rate > 0
+        self.settled = True
+        self.settle_time = None     # set once each time the needle settles after a turn
+        self.gave_up = False
+        self._buf = []              # (t, residual_deg), residual unwrapped
+        self._g = 0.0               # gyro-integrated rotation, deg
+        self._t = None
+        self._calm_since = None
+        self._unsettled_since = None
+        self._last_turn_t = None
+
+    def update(self, t, heading_deg, gyro_dps):
+        """Feed every compass reading with the current gyro yaw rate. Returns settled?"""
+        self.settle_time = None
+        if not self.enabled or gyro_dps is None:
+            return True
+        if self._t is not None:
+            dt = t - self._t
+            if dt > self.window:  # gap in readings: start over
+                self._buf = []
+                self._calm_since = None
+            else:
+                self._g += gyro_dps * dt
+        self._t = t
+        turning = abs(gyro_dps) > self.turn_dps
+        if turning:
+            self._last_turn_t = t
+
+        r = heading_deg - self._g
+        if self._buf:
+            r = self._buf[-1][1] + wrap180(r - self._buf[-1][1])
+        self._buf.append((t, r))
+        while self._buf and t - self._buf[0][0] > self.window:
+            self._buf.pop(0)
+
+        calm = False
+        n = len(self._buf)
+        if n >= 5 and t - self._buf[0][0] >= 0.6 * self.window:
+            ts = [p[0] for p in self._buf]
+            rs = [p[1] for p in self._buf]
+            tm, rm = sum(ts) / n, sum(rs) / n
+            stt = sum((x - tm) ** 2 for x in ts)
+            slope = sum((x - tm) * (y - rm) for x, y in zip(ts, rs)) / stt
+            resid = math.sqrt(sum((y - rm - slope * (x - tm)) ** 2 for x, y in zip(ts, rs)) / max(1, n - 2))
+            noise_slope = resid / math.sqrt(stt)  # 1-sigma slope from noise alone
+            # allow for jitter, but cap it so a slow swing can't pass as "noise"
+            calm = abs(slope) < min(max(self.max_rate, 3.0 * noise_slope), 2.0 * self.max_rate)
+
+        was = self.settled
+        if turning:  # a damped needle always trails a turn; don't wait for the fit to notice
+            self._calm_since = None
+            self.settled = False
+            self._unsettled_since = None  # the give-up timer is for a needle that won't settle when still
+            return False
+        if calm:
+            self._calm_since = self._calm_since if self._calm_since is not None else t
+            self.settled = (t - self._calm_since) >= self.hold
+        else:
+            self._calm_since = None
+            self.settled = False
+
+        if self.settled:
+            self._unsettled_since = None
+            self.gave_up = False
+            if not was and self._last_turn_t is not None and t - self._last_turn_t < 30.0:
+                self.settle_time = t - self._last_turn_t
+        else:
+            self._unsettled_since = self._unsettled_since if self._unsettled_since is not None else t
+            if t - self._unsettled_since > self.give_up:
+                self.gave_up = True  # never block the compass for good (e.g. a loose mount)
+                return True
+        return self.settled
+
+
 class HeadingEstimator(object):
     def __init__(self, hcfg):
         dec = hcfg.get("declination_deg", 0.0)
@@ -108,6 +207,10 @@ class HeadingEstimator(object):
         self.base_std = float(hcfg.get("base_std_deg", 3.0))
         self.max_tilt = float(hcfg.get("max_tilt_deg", 20.0))
         self.max_yaw_rate = float(hcfg.get("max_yaw_rate_dps", 90.0))
+        self.settle = SettleDetector(max_rate_dps=hcfg.get("settle_max_rate_dps", 3.0),
+                                     turn_dps=hcfg.get("settle_turn_dps", 15.0),
+                                     hold_s=hcfg.get("settle_hold_s", 0.3),
+                                     give_up_s=hcfg.get("settle_give_up_s", 10.0))
         self._filt = None
         self._t_last = None
         self._jumps = 0
@@ -131,6 +234,8 @@ class HeadingEstimator(object):
             return HeadingSample(reason="no_needle")
         raw, mag, true = self.correct(needle_deg)
         s = HeadingSample(mag_raw_deg=raw, mag_deg=mag, true_deg=true)
+        # runs on every reading (even ones gated below) so it can follow the needle
+        settled = self.settle.update(t, mag, math.degrees(attitude.yawspeed) if attitude is not None else None)
         if true is None:
             s.reason = "waiting_for_gps_declination"
             return s
@@ -142,6 +247,9 @@ class HeadingEstimator(object):
             if abs(math.degrees(attitude.yawspeed)) > self.max_yaw_rate:
                 s.reason = "yaw_rate"
                 return s
+        if not settled:
+            s.reason = "needle_settling"
+            return s
 
         if self._filt is None or self._t_last is None or (t - self._t_last) > self.reset_after_s:
             self._filt = true

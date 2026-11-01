@@ -132,18 +132,55 @@ def cmd_setup(cfg, args):
             cam.close()
 
 
-def collect_raw_headings(cam, detector, seconds):
-    readings, seq = [], 0
-    end = time.monotonic() + seconds
-    while time.monotonic() < end:
+def raw_heading_stream(cam, detector):
+    """Yield (t, raw magnetic heading or None) for each new camera frame."""
+    seq = 0
+    while True:
         got = cam.read(seq, timeout=1.0)
         if got is None:
+            yield time.monotonic(), None
             continue
-        frame, _, seq = got
+        frame, t, seq = got
         r = detector.detect(frame)
-        if r.valid:
-            readings.append(needle_to_magnetic(r.angle_deg))
-    return readings
+        yield t, (needle_to_magnetic(r.angle_deg) if r.valid else None)
+
+
+def settled_average(samples, seconds, window_s=1.0, tol_deg=0.7, timeout_s=20.0):
+    """Wait for the needle to stop moving, then average `seconds` of readings.
+
+    After you turn the drone the needle swings for a while before it finds north;
+    averaging during that would bake the swing into the calibration. Steady = the
+    last window_s of readings vary less than tol_deg and aren't trending.
+    samples: iterator of (t, heading or None).
+    Returns (readings, waited_s, settled) - settled is False if it timed out.
+    """
+    recent, readings = [], []
+    t0 = t_settled = None
+    for t, h in samples:
+        t0 = t if t0 is None else t0
+        if t_settled is None:
+            if h is not None:
+                recent.append((t, h))
+            recent = [p for p in recent if t - p[0] <= window_s]
+            steady = False
+            if len(recent) >= 5 and t - recent[0][0] >= 0.8 * window_s:
+                hs = [p[1] for p in recent]
+                half = len(hs) // 2
+                _, std = circular_mean_deg(hs)
+                m1, _ = circular_mean_deg(hs[:half])
+                m2, _ = circular_mean_deg(hs[half:])
+                steady = std < tol_deg and abs(wrap180(m2 - m1)) < tol_deg / 2.0
+            if steady or t - t0 > timeout_s:
+                t_settled = t
+            continue
+        if h is not None:
+            readings.append(h)
+        if t - t_settled >= seconds:
+            break
+    if t_settled is None:  # ran out of readings before it ever settled
+        return readings, 0.0, False
+    waited = t_settled - t0
+    return readings, waited, waited <= timeout_s
 
 
 def cmd_swing(cfg, args):
@@ -163,7 +200,8 @@ def cmd_swing(cfg, args):
 Compass swing
 -------------
 Point the drone's nose at a known %s heading, hold it still, type that heading
-and press Enter. The tool averages %.0f s of camera readings. Repeat at several
+and press Enter. The tool waits for the needle to stop swinging, then averages
+%.0f s of camera readings. Repeat at several
 headings (every 45 deg is ideal). Empty line = finish and save.
 
 Reference ideas: a handheld compass held a few metres away from the drone, or
@@ -185,7 +223,12 @@ Do it outdoors, away from cars and rebar, with the drone powered as it flies.
                 continue
             if args.true:
                 ref = wrap360(ref - decl)
-            readings = collect_raw_headings(cam, detector, args.seconds)
+            print("  waiting for the needle to settle...")
+            readings, waited, settled = settled_average(raw_heading_stream(cam, detector), args.seconds)
+            if settled:
+                print("  needle settled after %.1f s" % waited)
+            else:
+                print("  WARNING: needle never settled (is the drone moving or vibrating?) - using it anyway")
             if len(readings) < 10:
                 print("  only %d valid readings - check lighting / `calibrate setup`. Skipped." % len(readings))
                 continue

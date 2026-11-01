@@ -54,6 +54,10 @@ DEFAULTS = {
         "base_std_deg": 3.0,        # 1-sigma heading noise reported to the FC
         "max_tilt_deg": 20.0,       # don't send while tilted more than this
         "max_yaw_rate_dps": 90.0,   # don't send while yawing faster than this
+        "settle_max_rate_dps": 3.0, # needle still swinging faster than this after a turn = skip (0 = off)
+        "settle_turn_dps": 15.0,    # turning faster than this: needle is lagging, skip
+        "settle_hold_s": 0.3,       # ...must be calm this long before it's trusted again
+        "settle_give_up_s": 10.0,   # never block the compass longer than this
     },
     "mavlink": {
         "firmware": "ardupilot",    # ardupilot | px4

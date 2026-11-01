@@ -141,6 +141,7 @@ def run(cfg, mode, debug_port_override=None):
     last_status = time.monotonic()
     last = None
     warned_fc = False
+    warned_settle = False
 
     try:
         while not stop["flag"]:
@@ -172,6 +173,13 @@ def run(cfg, mode, debug_port_override=None):
                                       reading.confidence, att)
             reason = reading.reason if not reading.valid else sample.reason
             fc_mode = link.flight_mode if link else None
+            if estimator.settle.settle_time is not None:
+                log.info("needle settled %.1f s after the turn", estimator.settle.settle_time)
+            if estimator.settle.gave_up and not warned_settle:
+                log.warning("needle never settled for %.0f s - using the compass anyway. Check the compass "
+                            "mount for vibration, or raise heading.settle_max_rate_dps",
+                            estimator.settle.give_up)
+            warned_settle = estimator.settle.gave_up
 
             # --- ground camera: real rotation, holds the heading steady ------------
             st = None

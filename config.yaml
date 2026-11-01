@@ -51,6 +51,14 @@ heading:
   base_std_deg: 3.0           # heading noise (1 sigma) reported to PX4
   max_tilt_deg: 20.0          # needle compasses misread when tilted: stop sending above this
   max_yaw_rate_dps: 90.0      # damped needles lag when spinning: stop sending above this
+  # After a turn the needle keeps swinging for a few seconds before it finds north.
+  # Compass heading minus the gyro's rotation = the needle's own swing; while that is
+  # still moving faster than settle_max_rate_dps the reading is skipped. Adapts to
+  # your compass. The log reports "needle settled X s after the turn".
+  settle_max_rate_dps: 3.0    # 0 turns this off
+  settle_turn_dps: 15.0       # while turning faster than this the needle always lags: skip it
+  settle_hold_s: 0.3
+  settle_give_up_s: 10.0      # safety: never block the compass longer than this
 
 mavlink:
   firmware: ardupilot         # ardupilot | px4  (decides which MAVLink message is sent)
